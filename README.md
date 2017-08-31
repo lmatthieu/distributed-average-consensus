@@ -1,6 +1,8 @@
 # iterative-average-consensus
 Iterative average consensus algorithms simulation on NS3
 
+[![Build Status](https://travis-ci.org/lmatthieu/distributed-average-consensus.svg?branch=master)](https://travis-ci.org/lmatthieu/distributed-average-consensus)
+
 ## Building
 
 Install anaconda and create a new environment.
