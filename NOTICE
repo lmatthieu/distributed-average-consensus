@@ -1,0 +1,6 @@
+NS3 program for distributed average consensus simulation
+Copyright (C) 2017 - Matthieu Lagacherie
+
+The network discovery operators in sensor_app include code snippets from the
+DMC-SIM project https://github.com/Comcast/dmc-sim
+
