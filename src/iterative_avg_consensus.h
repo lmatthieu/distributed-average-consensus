@@ -35,7 +35,7 @@
 #include "ns3/position-allocator.h"
 
 #define SELF_STAB_NULL 4242
-#define SELF_STAB_EPSILON 0.001
+#define SELF_STAB_EPSILON 0.1
 
 extern ns3::LogComponent g_log;
 

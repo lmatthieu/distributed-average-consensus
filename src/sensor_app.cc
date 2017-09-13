@@ -20,6 +20,8 @@
 
 namespace ns3 {
 
+    std::map<size_t, size_t> SensorApp::m_iterations_move = std::map<size_t, size_t>();
+
     SensorApp::SensorApp() {
         m_sent = 0;
         m_nit = 0;
@@ -30,7 +32,7 @@ namespace ns3 {
         m_z = generate_random_sensor_data();
 
         /// self-stab initial parameters
-        m_epsilon = 0.0001;
+        m_epsilon = SELF_STAB_EPSILON;
         m_is_self_stab = false;
         m_broadcast = true;
         m_async = false;
@@ -60,6 +62,9 @@ namespace ns3 {
         m_broadcast = true;
         m_invitation_updated = false;
         m_acceptance_updated = false;
+        m_sstab_step = 0; /// Initial step of auto-stab
+        m_nmove = 0;
+        m_prv_nmove = 0;
 
         /// Recv socket initialization
         if (m_recv_socket == 0) {
@@ -377,7 +382,7 @@ namespace ns3 {
             delete[] buf;
         }
         // Starting iteration in diffusion mode
-        if (m_is_self_stab == false) {
+        /*if (m_is_self_stab == false) {
             NS_LOG_INFO("Diffusion mode " << m_async << " -- Checking states -- "
                                           << m_r.size() << " "
                                           << m_x.size() << " == " << GetNumNeighbors() + 1);
@@ -398,7 +403,7 @@ namespace ns3 {
         } else {
             if (m_current.size() == GetNumNeighbors() + 1)
                 SelfStabIterate();
-        }
+        }*/
     }
 
     double SensorApp::node_delta(double v) {
@@ -422,7 +427,7 @@ namespace ns3 {
             NS_LOG_INFO("\t- " << it.first << " -> " << it.second);
             double delta_v = node_delta(it.second);
 
-            if (delta_v > 0) {
+            if (delta_v > m_epsilon) {
                 s_ij[it.first] = 0;
                 alpha_ij[it.first] = 0;
                 delta_id.push_back(it.first);
@@ -473,6 +478,10 @@ namespace ns3 {
             sum += s_il;
         }
 
+        if (delta_id.size() > 0 && sum > 0) {
+            m_nmove++;
+        }
+
         for (auto it : s_ij) {
             NS_LOG_INFO("\tResult for node " << it.first
                                              << "\tState " << m_x[it.first]
@@ -489,10 +498,8 @@ namespace ns3 {
         m_sensor_data->Update(SENSOR_RUN, m_sensor_data->GetNodeId());
 
         m_send_event = Simulator::Schedule(MilliSeconds(10), &SensorApp::SendUpdate, this);
-        //m_update_event = Simulator::Schedule(Seconds(0.5), &SensorApp::UpdateState, this);
+        m_update_event = Simulator::Schedule(MilliSeconds(20), &SensorApp::UpdateState, this);
         //m_iter_event = Simulator::Schedule(Seconds(1), &SensorApp::Iterate, this);
-
-        m_nit++;
     }
 
     uint32_t SensorApp::GetInvitation(uint32_t id) {
@@ -635,6 +642,7 @@ namespace ns3 {
                     m_future[i_id] = (GetCurrent(i_id) + GetCurrent(j_id)) / 2.0;
                     NS_LOG_INFO("\t** CONFIRMATION FROM " << i_id << " TO " << j_id);
                     m_acceptance_updated = true;
+
                     break;
                 }
             }
@@ -656,6 +664,9 @@ namespace ns3 {
                     m_current[i_id] = m_future[i_id];
                     glb_shared_values[i_id] = m_current[i_id];
                     m_broadcast = true;
+
+                    if (GetInvitation(j_id) == i_id && GetAcceptance(i_id) == j_id)
+                        m_nmove++;
                 }
             }
         }
@@ -682,9 +693,10 @@ namespace ns3 {
         }
     }
 
-    void SensorApp::SelfStabCorrect() {
+    bool SensorApp::SelfStabCorrect() {
         uint32_t i_id = GetNode()->GetId();
         double i_x = GetCurrent(i_id);
+        bool can_reinvite = false;
 
         for (auto it_j : m_current) {
             uint32_t j_id = it_j.first;
@@ -705,6 +717,7 @@ namespace ns3 {
                     m_invitation[i_id] = SELF_STAB_NULL;
                     m_invitation_updated = true;
                     m_to_update.insert(j_id);
+                    can_reinvite = true;
                 }
                 if (GetAcceptance(i_id) == j_id && (GetInvitation(j_id) != i_id
                                                     || (0 <= i_x - j_x && i_x - j_x <= m_epsilon))) {
@@ -715,11 +728,13 @@ namespace ns3 {
                 }
             }
         }
+        return can_reinvite;
     }
 
     void SensorApp::SelfStabIterate() {
         uint32_t node_id = GetNode()->GetId();
         double sum = 0;
+        bool iterate = false;
         std::stringstream str;
 
         NS_LOG_INFO("============= NODE " << node_id << " ITERATING =================");
@@ -729,13 +744,37 @@ namespace ns3 {
             sum += it.second;
         }
         str << " *********** SUM " << sum << std::endl;
+        /*if (m_sstab_step == 1 && SelfStabCorrect()) {
+            m_sstab_step = 0;
+        }*/
 
-        SelfStabInvitation();
-        SelfStabAccept();
-        SelfStabConfirm();
-        SelfStabCommit();
-        SelfStabRelease();
-        SelfStabCorrect();
+        switch (m_sstab_step) {
+            case 0:
+                SelfStabInvitation();
+                m_sstab_step++;
+                iterate = true;
+                break;
+            case 1:
+                SelfStabAccept();
+                m_sstab_step++;
+                iterate = true;
+                break;
+            case 2:
+                SelfStabConfirm();
+                m_sstab_step++;
+                iterate = true;
+                break;
+            case 3:
+                SelfStabCommit();
+                m_sstab_step++;
+                iterate = true;
+                break;
+            case 4:
+                SelfStabRelease();
+                SelfStabCorrect();
+                m_sstab_step = 0;
+                break;
+        }
 
         str << "\tInvitation: ";
         for (auto it : m_invitation) {
@@ -760,10 +799,10 @@ namespace ns3 {
         NS_LOG_INFO("NODE " << node_id << " " << str.str());
 
 
-        m_send_event = Simulator::Schedule(MilliSeconds(10), &SensorApp::SelfStabSendState, this);
-        m_iter_event = Simulator::Schedule(MilliSeconds(50), &SensorApp::SelfStabIterate, this);
+        m_send_event = Simulator::Schedule(MilliSeconds(0), &SensorApp::SelfStabSendState, this);
 
-        m_nit++;
+        if (iterate)
+            m_iter_event = Simulator::Schedule(MilliSeconds(5), &SensorApp::SelfStabIterate, this);
     }
 
     void SensorApp::ChangeState(int newstate) {
@@ -784,7 +823,18 @@ namespace ns3 {
         NS_ASSERT(nrj_source != NULL);
         //NS_ASSERT (nrj_model != NULL);
 
+        // check previous moves
+        if (m_iterations_move.size() > 2 && m_iterations_move[m_nit - 1] == 0) {
+            Simulator::Stop();
+            return ;
+        }
+
+        if (m_iterations_move.find(m_nit) == m_iterations_move.end()) {
+            m_iterations_move[m_nit] = 0;
+        }
+
         if (m_is_self_stab == false) {
+            Iterate();
             std::cerr << "TR\t" << node_id
                       << "\t" << Simulator::Now().GetMilliSeconds()
                       << "\t" << m_nit
@@ -793,6 +843,8 @@ namespace ns3 {
                       << "\t" << m_z
                       << "\t" << m_x[node_id]
                       << "\t" << nrj_source->GetEnergyFraction()
+                      << "\t" << m_nmove
+                      << "\t" << m_iterations_move[m_nit]
                       << std::endl;
         } else {
             SelfStabIterate();
@@ -804,11 +856,19 @@ namespace ns3 {
                       << "\t" << m_z
                       << "\t" << m_current[node_id]
                       << "\t" << nrj_source->GetEnergyFraction()
+                      << "\t" << m_nmove
+                      << "\t" << m_iterations_move[m_nit]
                       << std::endl;
             //m_iter_event = Simulator::Schedule(MilliSeconds(10), &SensorApp::SelfStabIterate, this);
         }
+        m_iterations_move[m_nit] += m_nmove - m_prv_nmove;
+        m_prv_nmove = m_nmove;
+
         ChangeState(WifiPhy::SLEEP);
         m_print_event = Simulator::Schedule(MilliSeconds(50), &SensorApp::PrintState, this);
+
+        m_nit++;
+
     }
 
     void SensorApp::SelfStabSendState(void) {

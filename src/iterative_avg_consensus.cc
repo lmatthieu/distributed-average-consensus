@@ -16,6 +16,10 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <map>
+#include <algorithm>
+#include <iostream>
+
 #include "ns3/log.h"
 #include "iterative_avg_consensus.h"
 #include "sensor_app.h"
@@ -36,22 +40,59 @@ ns3::LogComponent g_log = ns3::LogComponent("IterativeAvgConsensus", "iterative_
  * @param mobility mobility model used to compute the simulated distances between nodes
  */
 void initializeGraph(uint32_t nNodes, uint32_t use_mk, double distance, const NodeContainer &nodes, Graph &G,
-                     const MobilityHelper &mobility) {
+                     const MobilityHelper &mobility, int nbranch = 0) {
+    std::map<int, int> ecount;
+
     if (use_mk > 0) {
         add_edge(0, 3, G);
         add_edge(1, 3, G);
         add_edge(2, 3, G);
         add_edge(1, 2, G);
     } else { /// Connectivity depends on signal range (distance parameter)
-        for (uint32_t i = 0; i < nNodes; i++) {
-            for (uint32_t j = i + 1; j < nNodes; j++) {
-                Ptr<Node> node_i = nodes.Get(i);
-                Ptr<Node> node_j = nodes.Get(j);
-                double dist_node = sqrt(mobility.GetDistanceSquaredBetween(node_i, node_j));
+        if (nbranch == 0) {
+            for (uint32_t i = 0; i < nNodes; i++) {
+                for (uint32_t j = i + 1; j < nNodes; j++) {
+                    Ptr<Node> node_i = nodes.Get(i);
+                    Ptr<Node> node_j = nodes.Get(j);
+                    auto it = ecount.find(i);
+                    double dist_node = sqrt(mobility.GetDistanceSquaredBetween(node_i, node_j));
 
-                if (dist_node < distance) {
-                    NS_LOG_DEBUG("extra connectivity: connecting " << i << " to " << j << " " << dist_node);
+                    if (dist_node < distance) {
+                        if (it == ecount.end()) {
+                            NS_LOG_DEBUG("extra connectivity: connecting " << i << " to " << j << " " << dist_node);
+                            add_edge(i, j, G);
+                            ecount[i] = 1;
+                        }
+                    }
+                }
+            }
+        } else {
+            vector<int> connections(nNodes * nNodes, 0);
+            uint32_t nb_total_links = 0;
+            uint32_t nb_links = nNodes * nbranch / 2;
+            uint32_t nb_max_links = nNodes * (nNodes - 1) / 2;
+
+            if (nb_links > nb_max_links)
+                nb_links = nb_max_links;
+
+            for (uint32_t i = 1; i < nNodes; i++) {
+                uint32_t j = rand() % i;
+
+                connections[i * nNodes + j] = 1;
+                connections[j * nNodes + i] = 1;
+                add_edge(i, j, G);
+                nb_total_links++;
+            }
+
+            while (nb_total_links < nb_links) {
+                uint32_t i = rand() % nNodes;
+                uint32_t j = rand() % nNodes;
+
+                if (i != j && !connections[i * nNodes + j]) {
+                    connections[i * nNodes + j] = 1;
+                    connections[j * nNodes + i] = 1;
                     add_edge(i, j, G);
+                    nb_total_links++;
                 }
             }
         }
@@ -69,6 +110,7 @@ void graphCorrection(uint32_t nNodes, Graph &G) {
     /// Computes the connected components to ensure a connected graph
     int num = 0;
     std::vector<int> component = get_connected_components(G, &num, nNodes);
+    std::vector<int> nodes_c0;
     size_t i;
 
     NS_LOG_INFO("Total number of components: " << num << " vec " << component.size() << " # vertices "
@@ -81,8 +123,7 @@ void graphCorrection(uint32_t nNodes, Graph &G) {
 
         for (i = 0; i < component.size(); ++i) {
             if (component[i] == 0) {
-                node_id = i;
-                break;
+                nodes_c0.push_back(i);
             }
         }
         for (i = 0; i < component.size(); ++i) {
@@ -90,6 +131,7 @@ void graphCorrection(uint32_t nNodes, Graph &G) {
             int cmp_id = component[i];
 
             if (cmp_id > 0 && processed.find(cmp_id) == processed.end()) {
+                node_id = rand() % nodes_c0.size();
                 NS_LOG_INFO("Connecting node " << i << " in component " << cmp_id << " to " << node_id);
                 add_edge(i, node_id, G);
                 processed.insert(cmp_id);
@@ -137,8 +179,8 @@ void initializePoint2Point(uint32_t nNodes, const NodeContainer &nodes, const Gr
         for (uint32_t j = i + 1; j < nNodes; j++) {
             if (edge(i, j, G).second) {
                 PointToPointHelper pointToPoint;
-                pointToPoint.SetDeviceAttribute("DataRate", StringValue("5Mbps"));
-                pointToPoint.SetChannelAttribute("Delay", StringValue("2ms"));
+                pointToPoint.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+                pointToPoint.SetChannelAttribute("Delay", StringValue("0ms"));
 
                 NodeContainer endpoints;
                 endpoints.Add(nodes.Get(i));
@@ -177,6 +219,7 @@ main(int argc, char *argv[]) {
     int seed = 42;
     int run_id = 0;
     int graph_correction = 1;
+    int nbranch = 1;
 
     CommandLine cmd;
 
@@ -198,6 +241,7 @@ main(int argc, char *argv[]) {
     Time::SetResolution(Time::MS);
     SeedManager::SetSeed(seed);
     SeedManager::SetRun(run_id);
+    srand(seed * run_id + 42);
 
     if (use_mk > 0)
         nNodes = 4;
@@ -220,9 +264,9 @@ main(int argc, char *argv[]) {
 
     /// Initializing graph corresponding to network nodes
     /// Static graph generation
-    initializeGraph(nNodes, use_mk, distance, nodes, G, mobility);
+    initializeGraph(nNodes, use_mk, distance, nodes, G, mobility, nbranch);
 
-    if (graph_correction > 0) {
+    if (graph_correction > 0 && nbranch == 0) {
         graphCorrection(nNodes, G);
     }
 
@@ -236,7 +280,7 @@ main(int argc, char *argv[]) {
 
     /// Initializing device energy model
     BasicEnergySourceHelper basicSourceHelper;
-    basicSourceHelper.Set("BasicEnergySourceInitialEnergyJ", DoubleValue(10));
+    basicSourceHelper.Set("BasicEnergySourceInitialEnergyJ", DoubleValue(100));
     EnergySourceContainer nrj_sources = basicSourceHelper.Install(nodes);
     DeviceEnergyModelContainer nrj_models;
 

@@ -69,7 +69,7 @@ inline std::vector<int> get_connected_components(Graph &G, int *num_cmp, int nno
 /**
  * Generates a random measure in the range [low, high]
  */
-inline double generate_random_sensor_data(double low = 0.0, double high = 1.0) {
+inline double generate_random_sensor_data(double low = 0.0, double high = 10.0) {
     return low + static_cast <double> (rand()) / (static_cast <double> (RAND_MAX / (high - low)));
 }
 

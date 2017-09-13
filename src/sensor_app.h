@@ -139,7 +139,7 @@ namespace ns3 {
         /**
          * Correct pointers
          */
-        void SelfStabCorrect();
+        bool SelfStabCorrect();
 
         /**
          * Self-stab consensus algorithm iteration
@@ -193,10 +193,15 @@ namespace ns3 {
         bool m_invitation_updated;
         bool m_acceptance_updated;
         std::set<uint32_t> m_to_update;
+        int m_sstab_step;
+        bool is_move;
 
         uint32_t m_nit;
+        uint32_t m_nmove, m_prv_nmove;
         bool m_async;
         bool m_update_state;
+
+        static std::map<size_t, size_t> m_iterations_move;
     };
 
 
@@ -246,7 +251,7 @@ namespace ns3 {
                 if (m_use_mk)
                     out.Add(InstallPriv(nodes.Get(i), initial_states[i]));
                 else
-                    out.Add(InstallPriv(nodes.Get(i), nodes.GetN() * (initial_states[i] / sum)));
+                    out.Add(InstallPriv(nodes.Get(i), initial_states[i]));// 5 * nodes.GetN() * (initial_states[i] / sum)));
             }
 
             return out;
