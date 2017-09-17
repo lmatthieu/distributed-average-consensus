@@ -31,6 +31,59 @@ using namespace boost;
 ns3::LogComponent g_log = ns3::LogComponent("IterativeAvgConsensus", "iterative_avg_consensus.h");
 
 /**
+ * A post-processing step is applied to the generated graph to ensure that the graph is fully connected.
+ * This step iterates on all the nodes and extracts the connected components. If the number of connected components
+ * is greater than 1, then a connection is formed to connect the graph components between them.
+ * @param nNodes the current graph number of nodes
+ * @param G the boost graph object
+ */
+void graphCorrection(uint32_t nNodes, Graph &G) {
+    /// Computes the connected components to ensure a connected graph
+    int num = 0;
+    std::vector<int> component = get_connected_components(G, &num, nNodes);
+    std::vector<int> nodes_c0, nodes_cn;
+
+    NS_LOG_INFO("Total number of components: " << num << " vec " << component.size() << " # vertices "
+                                               << num_vertices(G));
+
+    /// If the number of components is greater than 1, then we connect the other components to the first
+    /// component
+    if (num > 1) {
+        set<int> processed;
+
+        /// We select all the nodes in component 0
+        for (int i = 0; i < component.size(); ++i) {
+            if (component[i] == 0) {
+                nodes_c0.push_back(i);
+            }
+        }
+        /// Each component are connected to a random node in component 0
+        for (int c = 0; c < num; ++c) {
+            nodes_cn.clear();
+
+            for (int i = 0; i < component.size(); ++i) {
+                if (component[i] == c) {
+                    nodes_cn.push_back(i);
+                }
+            }
+
+            /// Add a connection to a randomly choosen node in component 0
+            int node_0_id = nodes_c0[rand() % nodes_c0.size()];
+            int node_n_id = nodes_cn[rand() % nodes_cn.size()];
+
+            NS_LOG_INFO("Connecting node " << node_n_id << " in component " << c << " to " << node_0_id);
+            add_edge(node_0_id, node_n_id, G);
+
+            /// The nodes of c are added to the nodes of component 0
+            nodes_c0.insert(nodes_c0.end(), nodes_cn.begin(), nodes_cn.end());
+            NS_LOG_INFO("Component 0 new size " << nodes_c0.size());
+        }
+        component = get_connected_components(G, &num, nNodes);
+        NS_LOG_INFO("Total number of components after processing: " << num);
+    }
+}
+
+/**
  * Initialize the graph object with simulated signal range
  * @param nNodes number of nodes in the simulation
  * @param use_mk use a static graph configuration for debugging
@@ -40,7 +93,7 @@ ns3::LogComponent g_log = ns3::LogComponent("IterativeAvgConsensus", "iterative_
  * @param mobility mobility model used to compute the simulated distances between nodes
  */
 void initializeGraph(uint32_t nNodes, uint32_t use_mk, double distance, const NodeContainer &nodes, Graph &G,
-                     const MobilityHelper &mobility, int nbranch = 0) {
+                     const MobilityHelper &mobility, int nbranch = 0, int graph_correction = 1) {
     std::map<int, int> ecount;
 
     if (use_mk > 0) {
@@ -59,12 +112,18 @@ void initializeGraph(uint32_t nNodes, uint32_t use_mk, double distance, const No
 
                     if (dist_node < distance) {
                         if (it == ecount.end()) {
-                            NS_LOG_DEBUG("extra connectivity: connecting " << i << " to " << j << " " << dist_node);
+                            NS_LOG_DEBUG("Distance " << dist_node
+                                                     << " < " << distance
+                                                     << " connecting " << i << " to " << j << " " << dist_node);
                             add_edge(i, j, G);
                             ecount[i] = 1;
                         }
                     }
                 }
+            }
+
+            if (graph_correction > 0) {
+                graphCorrection(nNodes, G);
             }
         } else {
             vector<int> connections(nNodes * nNodes, 0);
@@ -99,49 +158,6 @@ void initializeGraph(uint32_t nNodes, uint32_t use_mk, double distance, const No
     }
 }
 
-/**
- * A post-processing step is applied to the generated graph to ensure that the graph is fully connected.
- * This step iterates on all the nodes and extracts the connected components. If the number of connected components
- * is greater than 1, then a connection is formed to connect the graph components between them.
- * @param nNodes the current graph number of nodes
- * @param G the boost graph object
- */
-void graphCorrection(uint32_t nNodes, Graph &G) {
-    /// Computes the connected components to ensure a connected graph
-    int num = 0;
-    std::vector<int> component = get_connected_components(G, &num, nNodes);
-    std::vector<int> nodes_c0;
-    size_t i;
-
-    NS_LOG_INFO("Total number of components: " << num << " vec " << component.size() << " # vertices "
-                                               << num_vertices(G));
-
-    /// If the number of components is greater than 1, then we connect the other components to the first
-    if (num > 1) {
-        set<int> processed;
-        int node_id = -1;
-
-        for (i = 0; i < component.size(); ++i) {
-            if (component[i] == 0) {
-                nodes_c0.push_back(i);
-            }
-        }
-        for (i = 0; i < component.size(); ++i) {
-            cerr << "[" << i << " " << component[i] << "]" << endl;
-            int cmp_id = component[i];
-
-            if (cmp_id > 0 && processed.find(cmp_id) == processed.end()) {
-                node_id = rand() % nodes_c0.size();
-                NS_LOG_INFO("Connecting node " << i << " in component " << cmp_id << " to " << node_id);
-                add_edge(i, node_id, G);
-                processed.insert(cmp_id);
-            }
-        }
-        cerr << endl;
-        component = get_connected_components(G, &num, nNodes);
-        NS_LOG_INFO("Total number of components after processing: " << num);
-    }
-}
 
 /**
  * This function writes the current graph for networkx plotting
@@ -219,7 +235,7 @@ main(int argc, char *argv[]) {
     int seed = 42;
     int run_id = 0;
     int graph_correction = 1;
-    int nbranch = 1;
+    int nbranch = 0;
 
     CommandLine cmd;
 
@@ -235,6 +251,8 @@ main(int argc, char *argv[]) {
     cmd.AddValue("run_id", "Set run id (simulation reproducibility)", run_id);
     cmd.AddValue("graph_correction", "Run the graph correction algorithm for non-connected components",
                  graph_correction);
+    cmd.AddValue("nbranch", "Generates random network without distances (with nbranch > 0)",
+                 nbranch);
 
     cmd.Parse(argc, argv);
 
@@ -264,11 +282,7 @@ main(int argc, char *argv[]) {
 
     /// Initializing graph corresponding to network nodes
     /// Static graph generation
-    initializeGraph(nNodes, use_mk, distance, nodes, G, mobility, nbranch);
-
-    if (graph_correction > 0 && nbranch == 0) {
-        graphCorrection(nNodes, G);
-    }
+    initializeGraph(nNodes, use_mk, distance, nodes, G, mobility, nbranch, graph_correction);
 
     writeGraph(nNodes, output_path, nodes, G);
 
