@@ -19,6 +19,7 @@
 #include <map>
 #include <algorithm>
 #include <iostream>
+#include <boost/format.hpp>
 
 #include "ns3/log.h"
 #include "iterative_avg_consensus.h"
@@ -229,8 +230,9 @@ main(int argc, char *argv[]) {
     uint32_t use_mk = 0;
     std::string output_path = "/tmp";
     uint32_t self_stab = 0;
-    std::string random_gen_pos("ns3::UniformRandomVariable[Min=0.0|Max=100.0]");
-    double distance = 30;
+    std::string random_gen_pos("ns3::UniformRandomVariable[Min=0.0|Max=1000.0]");
+    double node_density_pkm2 = 100;
+    double distance = 250;
     int is_async = 0;
     int seed = 42;
     int run_id = 0;
@@ -253,6 +255,7 @@ main(int argc, char *argv[]) {
                  graph_correction);
     cmd.AddValue("nbranch", "Generates random network without distances (with nbranch > 0)",
                  nbranch);
+    cmd.AddValue("node_density", "Node density / km2", node_density_pkm2);
 
     cmd.Parse(argc, argv);
 
@@ -267,6 +270,17 @@ main(int argc, char *argv[]) {
     NodeContainer nodes;
     nodes.Create(nNodes);
     Graph G(nNodes);
+
+    /// Set map size vs node density
+    double surface = nNodes / node_density_pkm2;
+    double sq_len = sqrt(surface) * 1000;
+
+    random_gen_pos = (boost::format("ns3::UniformRandomVariable[Min=0.0|Max=%1%]") % sq_len).str();
+    NS_LOG_DEBUG("NbNodes=" << nNodes << ", surface=" << surface
+                            << ", sq_len=" << sq_len
+                            << ", rng=" << random_gen_pos
+                            << ", distance=" << distance);
+
 
     /// Position Allocator: allocate the nodes of the simulated map using random_gen_pos
     AsciiTraceHelper ascii;
