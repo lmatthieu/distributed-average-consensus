@@ -5,6 +5,8 @@ Iterative average consensus algorithms simulation on NS3
 
 ## Building
 
+### Building with Python support for notebooks and statistics
+
 Install anaconda and create a new environment.
 https://www.continuum.io/downloads
 
@@ -26,6 +28,22 @@ Build the project
 source activate ns3
 mkdir release
 cd release
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make
+```
+
+### Building core only
+
+On debian platforms (ubuntu, etc).
+
+```
+apt-get install bzip2 g++ git parallel screen cmake libboost-graph-dev
+```
+
+Build the project
+
+```
+mkdir release
 cmake -DCMAKE_BUILD_TYPE=Release ..
 make
 ```
